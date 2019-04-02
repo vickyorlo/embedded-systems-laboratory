@@ -1,0 +1,114 @@
+#include "DBGU.h"
+#include "FIFO.h"
+
+unsigned int TransferErrors = 0;
+unsigned int SpuriousInterrupts = 0;
+
+int DBGU_Init(void)
+{
+ //disable rx and tx
+ DisableDBGUReceiver();
+ DisableDBGUTransmitter();
+ //reset receiver and transmitter
+ *AT91C_DBGU_CR  |= AT91C_US_RSTRX;
+ *AT91C_DBGU_CR  |= AT91C_US_RSTTX;
+ //enable and configure i/o
+ *AT91C_PIOC_PDR = AT91C_PC30_DRXD;
+ *AT91C_PIOC_PDR = AT91C_PC31_DTXD;
+ *AT91C_PIOC_ASR = AT91C_PC30_DRXD;
+ *AT91C_PIOC_ASR = AT91C_PC31_DTXD;
+ //reset status registers
+ *AT91C_DBGU_CR  |= AT91C_US_RSTSTA;
+ //enable no parity bit mode
+ *AT91C_DBGU_MR  |= AT91C_US_PAR_NONE;
+ *AT91C_DBGU_MR  |= AT91C_US_CHMODE_NORMAL;
+ //disable all interrupts
+ *AT91C_DBGU_IDR = 0xFFFFFFFF;
+ //configure interrupts and set up handler
+ InitializeAICForDBGU();
+ //set baudrate
+ *AT91C_DBGU_BRGR = (unsigned int)(MASTERCLOCK/(16*BAUDRATE));
+ //enable rx and tx
+ EnableDBGUReceiver();
+ EnableDBGUTransmitter();
+ return 0;
+}
+
+void EnableDBGUReceiver()
+{
+   *AT91C_DBGU_CR  = AT91C_US_RXEN;
+}
+
+void DisableDBGUReceiver()
+{
+   *AT91C_DBGU_CR  = AT91C_US_RXDIS;
+}
+
+void EnableDBGUTransmitter()
+{
+  *AT91C_DBGU_CR  = AT91C_US_TXEN;
+}
+
+void DisableDBGUTransmitter()
+{
+  *AT91C_DBGU_CR = AT91C_US_TXDIS;
+}
+
+void DBGUINTHandler()
+{
+  if(*AT91C_AIC_IMR & (1 << AT91C_ID_SYS))
+  {
+    if(*AT91C_DBGU_CSR & *AT91C_DBGU_IMR & AT91C_US_RXRDY) //receiver is filled
+    {
+      char readCharacter = ' ';
+      DBGU_ReadData(&readCharacter);
+      if (!(QueueWriteData(readCharacter) && readCharacter))
+      {
+	EnableDBGUTransmitter();
+      }
+    }
+    else if (*AT91C_DBGU_CSR & *AT91C_DBGU_IMR & AT91C_US_TXRDY) //transmitter is empty
+    {
+      char readCharacter = ' ';
+      if (QueueReadData(&readCharacter))
+      {
+	DBGU_SendData(readCharacter);
+      }
+      else DisableDBGUTransmitter();
+    }
+    else if (*AT91C_DBGU_CSR & *AT91C_DBGU_IMR & (AT91C_US_OVRE | AT91C_US_FRAME | AT91C_US_PARE)) //transmission error
+    {
+      TransferErrors++;
+    }
+    else SpuriousInterrupts++; //unknown interrupt
+  }
+  else SpuriousInterrupts++;
+}
+
+void InitializeAICForDBGU()
+{
+  *AT91C_AIC_IDCR = 1 << AT91C_ID_SYS; 
+  *AT91C_AIC_ICCR = 1 << AT91C_ID_SYS;
+  
+  AT91C_AIC_SVR[AT91C_ID_SYS] = (unsigned int) DBGUINTHandler; 
+  AT91C_AIC_SMR[AT91C_ID_SYS] = AT91C_AIC_SRCTYPE_INT_EDGE_TRIGGERED |
+				AT91C_AIC_PRIOR_HIGHEST;
+  
+  *AT91C_DBGU_IER = AT91C_US_RXRDY;
+  *AT91C_DBGU_IER = AT91C_US_TXRDY;
+  *AT91C_DBGU_IER = (AT91C_US_OVRE | AT91C_US_FRAME | AT91C_US_PARE);
+
+  *AT91C_AIC_IECR = 1 << AT91C_ID_SYS; 
+}
+
+int DBGU_SendData(char data)
+{
+ *AT91C_DBGU_THR = data;
+ return 0;
+}
+
+int DBGU_ReadData(char* data)
+{
+ *data = *AT91C_DBGU_RHR;
+ return 0;
+}

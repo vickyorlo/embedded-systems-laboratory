@@ -1,0 +1,11 @@
+#define QUEUE_CAPACITY 10
+
+char buffer[QUEUE_CAPACITY];
+int tail;
+int head;
+
+void ClearArray(char* array);
+int InitQueue();
+int QueueWriteData(char data);
+int QueueReadData(char* data);
+int QueueReadString(char* string);
